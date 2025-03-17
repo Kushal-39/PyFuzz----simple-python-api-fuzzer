@@ -13,7 +13,7 @@ PyFuzz is a simple API endpoint enumerator that helps discover hidden API routes
 
 ### 1. Clone the Repository  
 ```bash
-git clone https://github.com/yourusername/pyfuzz.git
+git clone https://github.com/Kushal-39/pyfuzz.git
 cd pyfuzz
 ```
 
