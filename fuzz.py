@@ -2,7 +2,7 @@ import sys
 import requests
 
 # Prompt the user to enter the URL including the http(s) protocol
-URL = input("Give the url of the site, including the http(s)\n")
+URL = input("Give the url of the site, including the http(s)(NO TRAILING BACKSLASH)\n")
 
 # Define the path to the wordlist file containing potential API routes
 wordlist = "apiroutes.txt"
