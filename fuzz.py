@@ -4,140 +4,124 @@ import requests
 import urllib.parse
 import logging
 import time
-import concurrent.futures
 from tqdm import tqdm
+import uuid
+from datetime import datetime, timezone
 
-# Configure logging (will be updated based on verbosity level)
+TOOL_NAME = "PyFuzz"
+TOOL_VERSION = "1.0.0"
+SESSION_ID = str(uuid.uuid4())
+
+class ContextLogFilter(logging.Filter):
+    def filter(self, record):
+        # Attach UTC timestamp, session ID, tool name/version to every log record
+        record.utc_timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        record.session_id = SESSION_ID
+        record.tool_name = TOOL_NAME
+        record.tool_version = TOOL_VERSION
+        return True
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(utc_timestamp)s [%(tool_name)s %(tool_version)s] [session:%(session_id)s] %(levelname)s - %(message)s'
 )
+logging.getLogger().addFilter(ContextLogFilter())
 
-# Default values
-DEFAULT_THREADS = 10
 DEFAULT_TIMEOUT = 3
 DEFAULT_WORDLIST = "apiroutes.txt"
-
-# Global variables to be set by command line arguments
-MAX_THREADS = DEFAULT_THREADS
 TIMEOUT = DEFAULT_TIMEOUT
 
 def validate_url(url):
-    """
-    Validates that the URL starts with http:// or https://
-    Raises ValueError if invalid
-    """
     if not url.startswith(('http://', 'https://')):
         raise ValueError("URL must start with http:// or https://")
     return url
 
 def parse_arguments():
-    """
-    Parse command line arguments
-    """
     parser = argparse.ArgumentParser(
         description="PyFuzz - A simple Python API fuzzer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   python fuzz.py -u https://example.com/api
-  python fuzz.py -u https://example.com -w custom_wordlist.txt -t 20
+  python fuzz.py -u https://example.com -w custom_wordlist.txt
   python fuzz.py -u https://example.com -v --timeout 5 --output results.txt
         """
     )
-    
     parser.add_argument(
         '-u', '--url',
         type=str,
         help='Target URL (including http:// or https://)',
         required=True
     )
-    
     parser.add_argument(
         '-w', '--wordlist',
         type=str,
         default=DEFAULT_WORDLIST,
         help=f'Wordlist file path (default: {DEFAULT_WORDLIST})'
     )
-    
-    parser.add_argument(
-        '-t', '--threads',
-        type=int,
-        default=DEFAULT_THREADS,
-        help=f'Number of concurrent threads (default: {DEFAULT_THREADS})'
-    )
-    
     parser.add_argument(
         '--timeout',
         type=int,
         default=DEFAULT_TIMEOUT,
         help=f'Request timeout in seconds (default: {DEFAULT_TIMEOUT})'
     )
-    
     parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Enable verbose output (debug level logging)'
     )
-    
     parser.add_argument(
         '-q', '--quiet',
         action='store_true',
         help='Enable quiet mode (only show results)'
     )
-    
     parser.add_argument(
         '-o', '--output',
         type=str,
         help='Output file to save results'
     )
-    
     parser.add_argument(
         '--no-progress',
         action='store_true',
         help='Disable progress bar'
     )
-    
+    parser.add_argument(
+        '--rate-limit',
+        type=float,
+        default=5,
+        help='Maximum requests per second (default: 5)'
+    )
+    parser.add_argument(
+        '--method',
+        type=str,
+        default='GET',
+        help='HTTP method to use for requests (default: GET)'
+    )
     return parser.parse_args()
 
-# Worker function to check a single endpoint
-def check_endpoint(word, base_url):
-    """
-    Check a single endpoint by appending word to base_url
-    Returns None for 404 responses or on unrecoverable errors
-    Returns a tuple of (endpoint, status_code, response_data) for non-404 responses
-    """
-    # Use urllib.parse.urljoin to ensure proper URL formation
+def check_endpoint(word, base_url, method='GET'):
     endpoint = urllib.parse.urljoin(base_url, word)
-    
-    # Retry logic for failed requests
     max_retries = 1
     retry_count = 0
-    
+    method = method.upper()
+    allowed_methods = {'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'}
+    if method not in allowed_methods:
+        logging.error(f"Unsupported HTTP method: {method}")
+        return None
     while retry_count <= max_retries:
         try:
-            # Send the request with a timeout
-            res = requests.get(endpoint, timeout=TIMEOUT)
-            
-            # Check for rate limiting
+            res = requests.request(method, endpoint, timeout=TIMEOUT)
             if res.status_code == 429:
                 logging.warning(f"Rate limit detected for {endpoint}. Consider slowing down requests.")
-                time.sleep(2)  # Add a delay before retry
+                time.sleep(2)
                 retry_count += 1
                 continue
-                
-            # If a 404 (Not Found) is returned, return None
             if res.status_code == 404:
                 return None
-            
-            # For non-404 responses, process and return the result
             try:
-                # Attempt to decode the response as JSON
                 data = res.json()
                 return (endpoint, res.status_code, data)
             except ValueError:
-                # If not JSON, just return the status code
                 return (endpoint, res.status_code, None)
-            
         except requests.exceptions.Timeout:
             if retry_count < max_retries:
                 logging.debug(f"Timeout for {endpoint}. Retrying...")
@@ -155,56 +139,50 @@ def check_endpoint(word, base_url):
         except requests.exceptions.RequestException as e:
             logging.debug(f"Request error for {endpoint}: {e}. Skipping.")
             return None
-    
-    return None  # Default return if we somehow exit the loop without returning
+    return None
 
-def loop(url, wordlist_path, show_progress=True):
-    """
-    Reads the wordlist and processes endpoints in parallel using ThreadPoolExecutor
-    """
+def is_safe_word(word):
+    # Prevent path traversal attempts
+    if '..' in word or word.startswith('/') or word.startswith('\\'):
+        return False
+    return True
+
+def loop(url, wordlist_path, show_progress=True, rate_limit=0, method='GET'):
     try:
-        # Read the wordlist from file, stripping whitespace and skipping empty lines
         with open(wordlist_path, "r") as file:
             words = [line.strip() for line in file if line.strip()]
     except Exception as e:
-        # Print an error message if the wordlist cannot be read
         logging.error(f"Error reading wordlist: {e}")
         return []
-
     total = len(words)
     logging.info(f"Total words to check: {total}")
     results = []
-
-    # Use ThreadPoolExecutor to process endpoints in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-        # Submit all tasks to the executor
-        future_to_word = {executor.submit(check_endpoint, word, url): word for word in words}
-        
-        # Use tqdm to track progress if enabled
-        if show_progress:
-            iterator = tqdm(concurrent.futures.as_completed(future_to_word), total=len(words), desc="Scanning", unit="word")
-        else:
-            iterator = concurrent.futures.as_completed(future_to_word)
-            
-        for future in iterator:
-            word = future_to_word[future]
-            try:
-                result = future.result()
-                if result:  # Only store non-404 responses
-                    results.append(result)
-            except Exception as e:
-                logging.error(f"Error processing {word}: {e}")
-
+    iterator = words
+    if show_progress:
+        iterator = tqdm(words, total=total, desc="Scanning", unit="word")
+    min_interval = 1.0 / rate_limit if rate_limit > 0 else 0
+    for word in iterator:
+        if not is_safe_word(word):
+            logging.warning(f"Skipping potentially unsafe word: {word}")
+            continue
+        start_time = time.time()
+        try:
+            result = check_endpoint(word, url, method=method)
+            if result:
+                results.append(result)
+        except Exception as e:
+            logging.error(f"Error processing {word}: {e}")
+        if min_interval > 0:
+            elapsed = time.time() - start_time
+            sleep_time = min_interval - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
     return results
 
 def print_results(results, output_file=None):
-    """
-    Print and optionally save the results
-    """
     if results:
         logging.info(f"Found {len(results)} working endpoints")
         output_lines = []
-        
         for endpoint, status_code, data in results:
             result_text = f"\n[+] Working endpoint: {endpoint}\n"
             result_text += f"    Status code: {status_code}\n"
@@ -212,11 +190,8 @@ def print_results(results, output_file=None):
                 result_text += f"    Response data: {data}\n"
             else:
                 result_text += "    Response is not in JSON format.\n"
-            
             print(result_text)
             output_lines.append(result_text)
-        
-        # Save to file if specified
         if output_file:
             try:
                 with open(output_file, 'w') as f:
@@ -228,38 +203,22 @@ def print_results(results, output_file=None):
         logging.info("No working endpoints found")
 
 def main():
-    """
-    Main function to handle command line arguments and run the fuzzer
-    """
-    global MAX_THREADS, TIMEOUT
-    
-    # Parse command line arguments
+    global TIMEOUT
     args = parse_arguments()
-    
-    # Configure logging based on verbosity
     if args.quiet:
         logging.getLogger().setLevel(logging.WARNING)
     elif args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-    
-    # Set global variables from arguments
-    MAX_THREADS = args.threads
     TIMEOUT = args.timeout
-    
+    print(f"{TOOL_NAME} v{TOOL_VERSION} | Session: {SESSION_ID} | UTC: {datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}")
     try:
-        # Validate URL
         url = validate_url(args.url)
         logging.info(f"Target URL: {url}")
         logging.info(f"Wordlist: {args.wordlist}")
-        logging.info(f"Threads: {args.threads}")
         logging.info(f"Timeout: {args.timeout}s")
-        
-        # Run the fuzzer
-        results = loop(url, args.wordlist, show_progress=not args.no_progress)
-        
-        # Print results
+        logging.info(f"HTTP Method: {args.method.upper()}")
+        results = loop(url, args.wordlist, show_progress=not args.no_progress, rate_limit=getattr(args, 'rate_limit', 0), method=args.method)
         print_results(results, args.output)
-        
     except ValueError as e:
         logging.error(f"URL Error: {e}")
         sys.exit(1)
@@ -277,10 +236,8 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        # Exit gracefully upon receiving a keyboard interrupt
         logging.info("\nProcess interrupted by user. Exiting...")
         sys.exit(0)
     except EOFError:
-        # Exit gracefully if an EOF error is received (e.g., Ctrl+D)
         logging.info("\nEOF received. Exiting...")
         sys.exit(0)

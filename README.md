@@ -1,22 +1,22 @@
-
 # PyFuzz
 
 **PyFuzz** is a fast, multithreaded API endpoint enumerator that helps discover hidden API routes by sending HTTP GET requests based on a wordlist.
 
 ## 🔍 Features
 
-- **Command line interface** with comprehensive argument support
+- Command line interface with comprehensive argument support
 - Reads potential API routes from a customizable wordlist (default: `apiroutes.txt`)
-- Sends **GET** requests to detect valid API paths
-- **Skips 404 Not Found** responses
-- Attempts to parse and display **JSON responses**, with fallback for non-JSON responses
-- Handles timeouts, connection errors, and rate limits with **retry logic**
-- Displays real-time **progress bar** using `tqdm` (can be disabled)
-- Uses **configurable multithreading** (`concurrent.futures`) for fast, efficient enumeration
-- **Multiple verbosity levels** (quiet, normal, verbose)
-- **Save results to file** option
-- Clean and professional logging using Python's `logging` module
-- **Graceful error handling** and interruption support
+- Sends requests with configurable HTTP method (`--method`, default: GET)
+- Skips 404 Not Found responses
+- Attempts to parse and display JSON responses, with fallback for non-JSON responses
+- Handles timeouts, connection errors, and rate limits with retry logic
+- Displays real-time progress bar using `tqdm` (can be disabled)
+- Configurable rate limiting (`--rate-limit`, default: 5 req/sec)
+- Prevents path traversal attempts in wordlist entries
+- Logs include UTC timestamps, session identifiers, and tool/version metadata
+- Save results to file option
+- Multiple verbosity levels (quiet, normal, verbose)
+- Graceful error handling and interruption support
 
 ---
 
@@ -25,13 +25,11 @@
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/Kushal-39/pyfuzz.git
-cd pyfuzz
+git clone https://github.com/Kushal-39/PyFuzz----simple-python-api-fuzzer
+cd PyFuzz----simple-python-api-fuzzer
 ```
 
 ### 2. Install Dependencies
-
-Make sure you have Python 3 installed. Then install the required libraries:
 
 ```bash
 pip install requests tqdm
@@ -39,35 +37,31 @@ pip install requests tqdm
 
 ### 3. Run the Script
 
-#### Basic Usage (Interactive Mode)
+#### Basic Usage
 ```bash
 python fuzz.py -u https://example.com/api
 ```
 
-#### Command Line Options
+#### Custom HTTP Method
 ```bash
-# Basic scan with custom wordlist and thread count
-python fuzz.py -u https://example.com/api -w custom_wordlist.txt -t 20
+python fuzz.py -u https://example.com/api --method POST
+```
 
-# Verbose mode with custom timeout and save results
-python fuzz.py -u https://example.com -v --timeout 5 -o results.txt
-
-# Quiet mode with no progress bar
-python fuzz.py -u https://example.com -q --no-progress
-
-# High-performance scan
-python fuzz.py -u https://example.com -t 50 --timeout 2
+#### Advanced Usage
+```bash
+python fuzz.py -u https://example.com/api -w custom_wordlist.txt --method PUT --rate-limit 2 -v -o results.txt
 ```
 
 #### Command Line Arguments
-- `-u, --url`: Target URL (required) - must include http:// or https://
+- `-u, --url`: Target URL (required, must include http:// or https://)
 - `-w, --wordlist`: Custom wordlist file (default: apiroutes.txt)
-- `-t, --threads`: Number of concurrent threads (default: 10)
 - `--timeout`: Request timeout in seconds (default: 3)
 - `-v, --verbose`: Enable verbose output (debug level logging)
 - `-q, --quiet`: Enable quiet mode (only show results)
 - `-o, --output`: Output file to save results
 - `--no-progress`: Disable progress bar
+- `--rate-limit`: Maximum requests per second (default: 5)
+- `--method`: HTTP method to use for requests (default: GET)
 - `-h, --help`: Show help message and examples
 
 #### Get Help
@@ -79,41 +73,33 @@ python fuzz.py --help
 
 ## 🧪 Example Output
 
-### Interactive Mode
 ```text
-python fuzz.py -u https://httpbin.org -w test_wordlist.txt -v
-2025-05-25 21:42:46,929 - INFO - Target URL: https://httpbin.org
-2025-05-25 21:42:46,929 - INFO - Wordlist: test_wordlist.txt
-2025-05-25 21:42:46,929 - INFO - Threads: 10
-2025-05-25 21:42:46,929 - INFO - Timeout: 3s
-2025-05-25 21:42:46,929 - INFO - Total words to check: 10
-Scanning: 100%|████████████████████████| 10/10 [00:04<00:00, 2.08word/s]
-2025-05-25 21:42:51,772 - INFO - Found 8 working endpoints
+PyFuzz v1.0.0 | Session: 123e4567-e89b-12d3-a456-426614174000 | UTC: 2025-05-31T12:00:00Z
+2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Target URL: https://example.com/api
+2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Wordlist: apiroutes.txt
+2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Timeout: 3s
+2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - HTTP Method: GET
+2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Total words to check: 10
+Scanning: 100%|████████████████████████| 10/10 [00:02<00:00, 4.00word/s]
 
-[+] Working endpoint: https://httpbin.org/get
+[+] Working endpoint: https://example.com/api/users
     Status code: 200
-    Response data: {'args': {}, 'headers': {...}, 'origin': '...', 'url': '...'}
+    Response data: {'message': 'Success', 'users': [...]}  
 
-[+] Working endpoint: https://httpbin.org/json
-    Status code: 200
-    Response data: {'slideshow': {...}}
+[+] Working endpoint: https://example.com/api/status
+    Status code: 403
+    Response is not in JSON format.
 
-[+] Working endpoint: https://httpbin.org/headers
-    Status code: 200
-    Response data: {'headers': {...}}
+2025-05-31T12:00:02Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Found 2 working endpoints
 ```
 
-### Quiet Mode
-```text
-python fuzz.py -u https://httpbin.org -w test_wordlist.txt -q
-[+] Working endpoint: https://httpbin.org/get
-    Status code: 200
-    Response data: {...}
+---
 
-[+] Working endpoint: https://httpbin.org/json
-    Status code: 200
-    Response data: {...}
-```
+## ⚠️ Notes
+- Path traversal attempts (e.g., entries with `..`, `/`, or `\`) are automatically skipped for safety.
+- All logs include UTC timestamps, session IDs, and tool/version for traceability.
+- Supported HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS.
+- Default rate limit is 5 requests per second. Use `--rate-limit` to adjust.
 
 ---
 
