@@ -1,22 +1,19 @@
 # PyFuzz
 
-**PyFuzz** is a fast API endpoint enumerator that helps discover hidden API routes by sending HTTP GET requests based on a wordlist.
+**PyFuzz** is an intelligent API security testing tool with token handling, header mutation, and bypass testing capabilities. Designed for discovering hidden endpoints and testing authentication/authorization mechanisms.
 
 ## 🔍 Features
 
-- Command line interface with comprehensive argument support
-- Reads potential API routes from a customizable wordlist (default: `apiroutes.txt`)
-- Sends requests with configurable HTTP method (`--method`, default: GET)
-- Skips 404 Not Found responses
-- Attempts to parse and display JSON responses, with fallback for non-JSON responses
-- Handles timeouts, connection errors, and rate limits with retry logic
-- Displays real-time progress bar using `tqdm` (can be disabled)
-- Configurable rate limiting (`--rate-limit`, default: 5 req/sec)
-- Prevents path traversal attempts in wordlist entries
-- Logs include UTC timestamps, session identifiers, and tool/version metadata
-- Save results to file option
-- Multiple verbosity levels (quiet, normal, verbose)
-- Graceful error handling and interruption support
+- **Token Handling** - Bearer tokens, API keys, and custom authorization headers
+- **Header Mutation** - Automatic header fuzzing for bypass testing (X-Forwarded-For, X-Original-URL, etc.)
+- **Random User-Agent** - Rotate user agents and referers to evade detection
+- **HTTP Method Selection** - Support for GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+- **Rate Limiting** - Configurable requests per second (default: 5 req/sec)
+- **Path Traversal Protection** - Automatically skips unsafe wordlist entries
+- **Session Logging** - UTC timestamps, session IDs, and tool/version metadata in all logs
+- **Multiple Output Options** - Save results to file, quiet/verbose modes
+- **Progress Tracking** - Real-time progress bar (can be disabled)
+- **Smart Retry Logic** - Handles timeouts, connection errors, and 429 rate limits
 
 ---
 
@@ -47,22 +44,53 @@ python fuzz.py -u https://example.com/api
 python fuzz.py -u https://example.com/api --method POST
 ```
 
+#### With Authentication
+```bash
+python fuzz.py -u https://example.com/api --token YOUR_TOKEN --method POST
+```
+
+#### With Header Mutation (Bypass Testing)
+```bash
+python fuzz.py -u https://example.com/api --mutate-headers --random-agent -v
+```
+
 #### Advanced Usage
 ```bash
-python fuzz.py -u https://example.com/api -w custom_wordlist.txt --method PUT --rate-limit 2 -v -o results.txt
+python fuzz.py -u https://example.com/api \
+  --token YOUR_TOKEN \
+  --mutate-headers \
+  --random-agent \
+  --method POST \
+  --rate-limit 2 \
+  -o results.txt
 ```
 
 #### Command Line Arguments
+
+**Basic Options:**
 - `-u, --url`: Target URL (required, must include http:// or https://)
 - `-w, --wordlist`: Custom wordlist file (default: apiroutes.txt)
+- `--method`: HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
 - `--timeout`: Request timeout in seconds (default: 3)
-- `-v, --verbose`: Enable verbose output (debug level logging)
-- `-q, --quiet`: Enable quiet mode (only show results)
-- `-o, --output`: Output file to save results
-- `--no-progress`: Disable progress bar
 - `--rate-limit`: Maximum requests per second (default: 5)
-- `--method`: HTTP method to use for requests (default: GET)
-- `-h, --help`: Show help message and examples
+
+**Authentication:**
+- `--token`: Authorization token (automatically formatted with Bearer prefix)
+- `--token-type`: Token type for Authorization header (default: Bearer)
+- `--api-key`: API key for X-API-Key header
+
+**Header Options:**
+- `--header`: Custom header in format "Key: Value" (repeatable)
+- `--mutate-headers`: Enable header mutation for bypass testing
+- `--random-agent`: Use random User-Agent for each request
+- `--user-agent`: Custom User-Agent string
+
+**Output Options:**
+- `-o, --output`: Save results to file
+- `-v, --verbose`: Enable verbose output (debug logging)
+- `-q, --quiet`: Quiet mode (only show results)
+- `--no-progress`: Disable progress bar
+- `-h, --help`: Show help message
 
 #### Get Help
 ```bash
@@ -74,49 +102,39 @@ python fuzz.py --help
 ## 🧪 Example Output
 
 ```text
-PyFuzz v1.0.0 | Session: 123e4567-e89b-12d3-a456-426614174000 | UTC: 2025-05-31T12:00:00Z
-2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Target URL: https://example.com/api
-2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Wordlist: apiroutes.txt
-2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Timeout: 3s
-2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - HTTP Method: GET
-2025-05-31T12:00:00Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Total words to check: 10
-Scanning: 100%|████████████████████████| 10/10 [00:02<00:00, 4.00word/s]
+PyFuzz v1.0.0 | Session: 123e4567-e89b-12d3-a456-426614174000 | UTC: 2025-12-04T12:00:00Z
+2025-12-04T12:00:00Z [PyFuzz 1.0.0] [session:123e4567...] INFO - Target URL: https://example.com/api
+2025-12-04T12:00:00Z [PyFuzz 1.0.0] [session:123e4567...] INFO - Using authorization token with type: Bearer
+2025-12-04T12:00:00Z [PyFuzz 1.0.0] [session:123e4567...] INFO - Header mutation enabled for bypass testing
+2025-12-04T12:00:00Z [PyFuzz 1.0.0] [session:123e4567...] INFO - HTTP Method: POST
+Scanning: 100%|████████████████████████| 50/50 [00:10<00:00, 5.00word/s]
 
 [+] Working endpoint: https://example.com/api/users
     Status code: 200
     Response data: {'message': 'Success', 'users': [...]}  
 
-[+] Working endpoint: https://example.com/api/status
-    Status code: 403
-    Response is not in JSON format.
+[+] Working endpoint: https://example.com/api/admin
+    Status code: 200
+    Response data: {'admin': true}
 
-2025-05-31T12:00:02Z [PyFuzz 1.0.0] [session:123e4567-e89b-12d3-a456-426614174000] INFO - Found 2 working endpoints
+2025-12-04T12:00:10Z [PyFuzz 1.0.0] [session:123e4567...] INFO - Found 2 working endpoints
 ```
 
 ---
 
-## ⚠️ Notes
-- Path traversal attempts (e.g., entries with `..`, `/`, or `\`) are automatically skipped for safety.
-- All logs include UTC timestamps, session IDs, and tool/version for traceability.
-- Supported HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS.
-- Default rate limit is 5 requests per second. Use `--rate-limit` to adjust.
+## 🔒 Security Testing Features
 
----
+**Header Mutation** enables testing for:
+- IP-based access control bypass (X-Forwarded-For, X-Real-IP, X-Client-IP)
+- URL rewriting vulnerabilities (X-Original-URL, X-Rewrite-URL)
+- Host header injection (X-Forwarded-Host, X-Host)
+- Authentication/authorization bypasses
 
-## 🆕 Recent Updates
-
-### Command Line Interface
-- **Complete command line argument support** - no more interactive prompts required
-- **Flexible configuration** - customize threads, timeout, wordlist, and verbosity
-- **Output to file** - save results for later analysis
-- **Multiple verbosity levels** - from quiet mode to debug logging
-- **Progress control** - enable/disable progress bar as needed
-- **Better error handling** - comprehensive validation and error messages
-
-### Performance Improvements
-- **Configurable threading** - adjust concurrent threads based on target and system capabilities
-- **Customizable timeouts** - fine-tune request timeouts for optimal performance
-- **Progress tracking** - optional progress bars for long-running scans
+**Token Handling** supports:
+- Bearer tokens for OAuth/JWT authentication
+- API key authentication
+- Custom authorization schemes
+- Multiple custom headers per request
 
 ---
 
