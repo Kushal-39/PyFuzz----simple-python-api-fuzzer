@@ -7,10 +7,48 @@ import time
 from tqdm import tqdm
 import uuid
 from datetime import datetime, timezone
+import random
+import itertools
 
 TOOL_NAME = "PyFuzz"
 TOOL_VERSION = "1.0.0"
 SESSION_ID = str(uuid.uuid4())
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15",
+    "Mozilla/5.0 (iPad; CPU OS 14_0 like Mac OS X) AppleWebKit/605.1.15",
+    "curl/7.68.0",
+    "python-requests/2.28.0",
+    "PostmanRuntime/7.29.0"
+]
+
+REFERERS = [
+    "https://www.google.com",
+    "https://www.bing.com",
+    "https://github.com",
+    "https://stackoverflow.com",
+    ""
+]
+
+HEADER_MUTATIONS = {
+    "X-Forwarded-For": ["127.0.0.1", "localhost", "192.168.1.1", "10.0.0.1"],
+    "X-Forwarded-Host": ["localhost", "example.com", "admin.local"],
+    "X-Original-URL": ["/admin", "/console", "/api/internal"],
+    "X-Rewrite-URL": ["/admin", "/console", "/api/internal"],
+    "X-Custom-IP-Authorization": ["127.0.0.1", "localhost"],
+    "X-Originating-IP": ["127.0.0.1", "localhost"],
+    "X-Remote-IP": ["127.0.0.1", "localhost"],
+    "X-Client-IP": ["127.0.0.1", "localhost"],
+    "X-Host": ["localhost", "127.0.0.1"],
+    "X-ProxyUser-Ip": ["127.0.0.1"],
+    "True-Client-IP": ["127.0.0.1"],
+    "Cluster-Client-IP": ["127.0.0.1"],
+    "CF-Connecting-IP": ["127.0.0.1"],
+    "Forwarded": ["for=127.0.0.1", "for=localhost"]
+}
 
 class ContextLogFilter(logging.Filter):
     def filter(self, record):
@@ -96,9 +134,54 @@ def parse_arguments():
         default='GET',
         help='HTTP method to use for requests (default: GET)'
     )
+    parser.add_argument(
+        '--token',
+        type=str,
+        help='Authorization token (e.g., Bearer token)'
+    )
+    parser.add_argument(
+        '--token-type',
+        type=str,
+        default='Bearer',
+        help='Token type for Authorization header (default: Bearer)'
+    )
+    parser.add_argument(
+        '--api-key',
+        type=str,
+        help='API key for X-API-Key header'
+    )
+    parser.add_argument(
+        '--header',
+        type=str,
+        action='append',
+        help='Custom header in format "Key: Value" (can be used multiple times)'
+    )
+    parser.add_argument(
+        '--mutate-headers',
+        action='store_true',
+        help='Enable header mutation for bypass testing'
+    )
+    parser.add_argument(
+        '--random-agent',
+        action='store_true',
+        help='Use random User-Agent for each request'
+    )
+    parser.add_argument(
+        '--user-agent',
+        type=str,
+        help='Custom User-Agent string'
+    )
     return parser.parse_args()
 
-def check_endpoint(word, base_url, method='GET'):
+def generate_mutated_headers(base_headers=None):
+    if base_headers is None:
+        base_headers = {}
+    mutated = base_headers.copy()
+    for header_name, values in random.sample(list(HEADER_MUTATIONS.items()), min(3, len(HEADER_MUTATIONS))):
+        mutated[header_name] = random.choice(values)
+    return mutated
+
+def check_endpoint(word, base_url, method='GET', headers=None):
     endpoint = urllib.parse.urljoin(base_url, word)
     max_retries = 1
     retry_count = 0
@@ -107,9 +190,11 @@ def check_endpoint(word, base_url, method='GET'):
     if method not in allowed_methods:
         logging.error(f"Unsupported HTTP method: {method}")
         return None
+    if headers is None:
+        headers = {}
     while retry_count <= max_retries:
         try:
-            res = requests.request(method, endpoint, timeout=TIMEOUT)
+            res = requests.request(method, endpoint, headers=headers, timeout=TIMEOUT)
             if res.status_code == 429:
                 logging.warning(f"Rate limit detected for {endpoint}. Consider slowing down requests.")
                 time.sleep(2)
@@ -147,7 +232,7 @@ def is_safe_word(word):
         return False
     return True
 
-def loop(url, wordlist_path, show_progress=True, rate_limit=0, method='GET'):
+def loop(url, wordlist_path, show_progress=True, rate_limit=0, method='GET', headers=None, mutate_headers=False, random_agent=False):
     try:
         with open(wordlist_path, "r") as file:
             words = [line.strip() for line in file if line.strip()]
@@ -167,7 +252,13 @@ def loop(url, wordlist_path, show_progress=True, rate_limit=0, method='GET'):
             continue
         start_time = time.time()
         try:
-            result = check_endpoint(word, url, method=method)
+            request_headers = headers.copy() if headers else {}
+            if random_agent:
+                request_headers['User-Agent'] = random.choice(USER_AGENTS)
+                request_headers['Referer'] = random.choice(REFERERS)
+            if mutate_headers:
+                request_headers.update(generate_mutated_headers())
+            result = check_endpoint(word, url, method=method, headers=request_headers)
             if result:
                 results.append(result)
         except Exception as e:
@@ -211,13 +302,37 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
     TIMEOUT = args.timeout
     print(f"{TOOL_NAME} v{TOOL_VERSION} | Session: {SESSION_ID} | UTC: {datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    
+    headers = {}
+    if args.user_agent:
+        headers['User-Agent'] = args.user_agent
+        logging.info(f"Using custom User-Agent")
+    if args.token:
+        headers['Authorization'] = f"{args.token_type} {args.token}"
+        logging.info(f"Using authorization token with type: {args.token_type}")
+    if args.api_key:
+        headers['X-API-Key'] = args.api_key
+        logging.info("Using API key authentication")
+    if args.header:
+        for header in args.header:
+            if ':' in header:
+                key, value = header.split(':', 1)
+                headers[key.strip()] = value.strip()
+                logging.info(f"Added custom header: {key.strip()}")
+            else:
+                logging.warning(f"Invalid header format (expected 'Key: Value'): {header}")
+    if args.mutate_headers:
+        logging.info("Header mutation enabled for bypass testing")
+    if args.random_agent:
+        logging.info("Random User-Agent enabled")
+    
     try:
         url = validate_url(args.url)
         logging.info(f"Target URL: {url}")
         logging.info(f"Wordlist: {args.wordlist}")
         logging.info(f"Timeout: {args.timeout}s")
         logging.info(f"HTTP Method: {args.method.upper()}")
-        results = loop(url, args.wordlist, show_progress=not args.no_progress, rate_limit=getattr(args, 'rate_limit', 0), method=args.method)
+        results = loop(url, args.wordlist, show_progress=not args.no_progress, rate_limit=getattr(args, 'rate_limit', 0), method=args.method, headers=headers, mutate_headers=args.mutate_headers, random_agent=args.random_agent)
         print_results(results, args.output)
     except ValueError as e:
         logging.error(f"URL Error: {e}")
