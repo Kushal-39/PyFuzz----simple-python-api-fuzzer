@@ -1,6 +1,6 @@
 # PyFuzz
 
-**PyFuzz** is a fast, multithreaded API endpoint enumerator that helps discover hidden API routes by sending HTTP GET requests based on a wordlist.
+**PyFuzz** is a fast API endpoint enumerator that helps discover hidden API routes by sending HTTP GET requests based on a wordlist.
 
 ## 🔍 Features
 
